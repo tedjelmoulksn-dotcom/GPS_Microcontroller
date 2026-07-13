@@ -23,7 +23,7 @@ All source code is in the `Codes/` directory:
 - Character LCD (e.g., 16x2) or equivalent display wired to the appropriate port (project uses helper functions in `lcdbt.h`).
 - PIC programmer (PICkit 3/4 or ICD3) or bootloader hardware.
 
-### Wiring (as assumed by the code)
+### Wiring 
 - GPS TX -> PIC RC7 (UART RX)
 - GPS RX -> PIC RC6 (UART TX)
 - GPS /RAW or mode pins -> PIC RC4 and RC5 (used by `init_gps_mode_smart()` to select Smart mode)
@@ -64,24 +64,10 @@ Review and set configuration bits appropriate for your device and hardware.
   - Parses returned bytes from the GPS and writes formatted values to the LCD.
 - The GPS protocol used in `request_gps()` starts the request with the string `!GPS` followed by a command byte (GetDate, GetTime, GetLat, GetLong, GetSats, GetAlt).
 
-## Known gaps & notes
-- Missing project headers: `functions.h`, `lcdbt.h` are referenced but not present. These are necessary for LCD functions and delay helpers such as `tempo_N_ms()` and for `init_PORTD()`.
-- The code assumes specific timing/delays (e.g., `tempo_N_ms(100)`); these helpers must be present or replaced with your delay implementation.
-- Verify exact MCU family/header compatibility (`pic168xa.h`) and change build settings accordingly.
-
 ## Troubleshooting
 - If you see no data: check GPS power, baud rate, wiring (TX->RX), and that RC6/RC7 TRIS settings allow UART use.
 - If LCD shows garbage: confirm `init_PORTD()` and LCD wiring, contrast and enabling lines.
 - If compilation fails: ensure the correct device is selected in the IDE and that missing header/source files are added.
 
-## Contributing
-- Add the missing headers and any Makefile or MPLAB project files.
-- Improve error checking in serial handling and add timeouts for `recoit_car()`.
-- Consider replacing global variables with a small GPS state struct for clarity.
-- Add a LICENSE file (MIT recommended) if you want permissive usage.
-
-## License
-No license file found in the repository. Add a LICENSE (for example, MIT) if you want others to reuse the code.
-
 ## Contact
-Maintainer: @tedjelmoulksn-dotcom
+@tedjelmoulksn-dotcom
