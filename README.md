@@ -1,73 +1,167 @@
-# GPS_Microcontroller
+# Récepteur GPS sur microcontrôleur PIC
 
-Compact PIC microcontroller project that reads data from a GPS module and displays date, time, latitude, longitude, satellite count and altitude on an LCD. Targeted for PIC16-series demo boards (example: PICDEM 2 PLUS) using the HI‑TECH / Microchip C toolchain. Useful for hobbyists and embedded engineers building simple GPS display devices.
+Lecture d'un module GPS par un microcontrôleur PIC16 et affichage de la date, de l'heure, de la latitude, de la longitude, du nombre de satellites et de l'altitude sur un écran LCD. Le programme est écrit en C, sans bibliothèque de liaison série : l'UART est configurée registre par registre.
 
-## Features
-- Serial interface to a GPS module (smart/raw mode control).
-- Requests and parses time, date, latitude, longitude, satellite count and altitude.
-- Displays results on an attached LCD.
-- Minimal example code for PIC16 microcontrollers with example wiring and mode control.
+![Carte PICDEM 2 Plus reliée à la carte d'extension portant le module GPS](assets/montage_carte_et_module_gps.jpg)
 
-## Repository layout
-All source code is in the `Codes/` directory:
+*Montage complet : carte de développement PICDEM 2 Plus (à gauche) et carte d'extension portant le récepteur GPS (en bas à droite).*
 
-- `Codes/GPS _main.c` — main application loop: initializes LCD, sets GPS smart mode, periodically requests data and writes to the LCD.
-- `Codes/Functions_gps.c` — GPS serial helper functions: UART init, send string/char, receive char, request parsing for each GPS field.
-- `Codes/Functions_gps.h` — declarations and shared globals / constants used by the GPS code (baud/divisor/commands).
+## Sommaire
 
-> Note: The project expects additional headers referenced in the sources: `functions.h`, `lcdbt.h`, `pic.h`, and `pic168xa.h`. These are not present in this repo and must be supplied (board/platform support, LCD driver, helper functions).
+1. [Présentation](#présentation)
+2. [Matériel et outils](#matériel-et-outils)
+3. [Architecture du montage](#architecture-du-montage)
+4. [Liaison série](#liaison-série)
+5. [Protocole du module GPS](#protocole-du-module-gps)
+6. [Organisation du code](#organisation-du-code)
+7. [Déroulement du programme](#déroulement-du-programme)
+8. [Résultats](#résultats)
+9. [Limites et améliorations](#limites-et-améliorations)
+10. [Compilation](#compilation)
 
-## Hardware (recommended)
-- PIC16Fxx microcontroller compatible with `pic168xa.h` includes (example: PIC16F877A family). Adjust for your exact device.
-- GPS module (UART, 3.3V or 5V level as appropriate for your GPS and PIC board).
-- Character LCD (e.g., 16x2) or equivalent display wired to the appropriate port (project uses helper functions in `lcdbt.h`).
-- PIC programmer (PICkit 3/4 or ICD3) or bootloader hardware.
+## Présentation
 
-### Wiring 
-- GPS TX -> PIC RC7 (UART RX)
-- GPS RX -> PIC RC6 (UART TX)
-- GPS /RAW or mode pins -> PIC RC4 and RC5 (used by `init_gps_mode_smart()` to select Smart mode)
-- LCD -> PORTD (the project calls `init_PORTD()` and LCD helpers from `lcdbt.h`)
-- Common GND and Vcc; ensure voltage compatibility and level shifting if required.
+- **Cadre** : projet de microcontrôleur, première année du cycle ingénieur Instrumentation, Sup Galilée (Université Sorbonne Paris Nord).
+- **Équipe** : projet réalisé en binôme avec Sarah Dahmoun.
+- **Objectif** : faire dialoguer un PIC avec un récepteur GPS par liaison série asynchrone, décoder les réponses et les afficher sur le LCD de la carte.
+- **État** : projet académique terminé, non maintenu.
 
-## Software requirements
-- MPLAB X IDE (recommended) or equivalent
-- Microchip XC8 (or HI‑TECH PICC if using legacy toolchain) for PIC16 family
-- Programmer (PICkit/ICD)
+## Matériel et outils
 
-## Configuration bits used in example
-The code includes:
+| Élément | Détail |
+|---|---|
+| Carte | Microchip PICDEM 2 Plus Demo Board |
+| Microcontrôleur | PIC16 de la famille 16F87xA (en-tête `pic168xa.h`), oscillateur 4 MHz |
+| Récepteur GPS | Module piloté par commandes `!GPS`, utilisé en mode « smart » |
+| Carte d'extension | Convertisseur RS232/TTL et multiplexeur question/réponse vers la broche SIO du module |
+| Affichage | LCD 2 × 16 caractères de la carte (OCULAR OM16214) |
+| Compilateur | HI-TECH PICC, sous MPLAB, programmation par ICD 3 |
+
+## Architecture du montage
+
+Le module GPS communique sur une seule broche bidirectionnelle (SIO). La carte d'extension adapte les niveaux RS232/TTL et aiguille cette broche soit vers l'émission du PIC (question), soit vers sa réception (réponse).
+
+```mermaid
+flowchart LR
+    subgraph PICDEM["Carte PICDEM 2 Plus"]
+        PIC["PIC16<br/>UART : RC6 (TX) / RC7 (RX)"]
+        LCD["LCD 2 × 16"]
+        PIC --> LCD
+    end
+    subgraph EXT["Carte d'extension"]
+        CONV["Convertisseur<br/>RS232 / TTL"]
+        MUX["Multiplexeur<br/>question / réponse"]
+        GPS["Récepteur GPS<br/>broches SIO et /RAW"]
+        CONV <--> MUX
+        MUX <--> GPS
+    end
+    PIC <-- "RS232 (DB9)" --> CONV
+    PIC -- "RC4 : sens question / réponse" --> MUX
+    PIC -- "RC5 : choix du mode" --> GPS
 ```
-__CONFIG(HS & WDTDIS & BOREN & LVPDIS);
+
+| Broche du PIC | Rôle |
+|---|---|
+| RC6 / RC7 | Émission / réception UART, via le connecteur RS232 de la carte |
+| RC4 | Sens de l'échange : `0` pour envoyer une question, `1` pour lire la réponse |
+| RC5 | Sélection du mode du module (`1` : mode smart) |
+| PORTD | Écran LCD |
+
+## Liaison série
+
+La liaison est asynchrone, à 4800 bauds, 8 bits de données, sans parité (durée d'un bit : 1/4800 ≈ 208 µs).
+
+Avec `BRGH = 1`, la vitesse vaut `Fosc / (16 × (SPBRG + 1))`. Pour un oscillateur à 4 MHz et `SPBRG = 51`, on obtient 4 MHz / (16 × 52) ≈ 4808 bauds, soit un écart d'environ 0,2 % par rapport à 4800.
+
+Configuration réalisée dans `init_liaison_serie()` :
+
+| Étape | Bits | Effet |
+|---|---|---|
+| Vitesse | `BRGH = 1`, `SPBRG = 51` | 4800 bauds |
+| Mode | `SYNC = 0`, `SPEN = 1` | Asynchrone, broches RC6/RC7 affectées à l'UART |
+| Interruptions | `TXIE = 0`, `RCIE = 0` | Aucune : émission et réception par scrutation |
+| Format | `TX9 = 0`, `RX9 = 0` | 8 bits |
+| Activation | `TXEN = 1`, `CREN = 1` | Émetteur et récepteur validés |
+
+L'émission attend le drapeau `TXIF` avant d'écrire dans `TXREG` ; la réception attend `RCIF` avant de lire `RCREG`.
+
+## Protocole du module GPS
+
+En mode smart, le module ne diffuse pas de trames en continu : il répond à des requêtes. Chaque requête est la chaîne ASCII `!GPS` suivie d'un octet de commande, et la réponse est une suite d'octets binaires.
+
+| Commande | Code | Octets reçus | Contenu lu par le programme |
+|---|---|---|---|
+| `GetSats` | `0x02` | 1 | Nombre de satellites |
+| `GetTime` | `0x03` | 3 | Heures, minutes, secondes (UTC) |
+| `GetDate` | `0x04` | 3 | Date |
+| `GetLat` | `0x05` | 5 | Degrés, minutes, fraction de minute (16 bits), direction |
+| `GetLong` | `0x06` | 5 | Degrés, minutes, fraction de minute (16 bits), direction |
+| `GetAlt` | `0x07` | 2 | Altitude (16 bits) |
+
+Les valeurs sur 16 bits arrivent octet de poids fort en premier et sont recomposées par `(octet_haut << 8) + octet_bas`.
+
+## Organisation du code
+
 ```
-Meaning:
-- HS oscillator selected (high-speed crystal)
-- Watchdog Timer disabled
-- Brown-out Reset enabled (BOREN)
-- Low-Voltage Programming disabled (LVPDIS)
+Codes/
+├── GPS _main.c        Programme principal : initialisations puis boucle d'affichage
+├── Functions_gps.c    UART, sélection du mode, requêtes et décodage des réponses
+└── Functions_gps.h    Constantes, variables partagées et prototypes
+assets/                Photos du montage
+```
 
-Review and set configuration bits appropriate for your device and hardware.
+| Fonction | Rôle |
+|---|---|
+| `init_liaison_serie()` | Configure l'UART à 4800 bauds |
+| `emet_car()` / `emet_string()` | Envoie un caractère ou une chaîne (RC4 à `0`) |
+| `recoit_car()` | Attend et renvoie un octet reçu (RC4 à `1`) |
+| `init_gps_mode_smart()` | Configure RC4 et RC5 en sortie et sélectionne le mode smart |
+| `request_gps(commande)` | Envoie `!GPS` + commande, puis range la réponse dans les variables globales |
 
-## Build & Flash (short path)
-1. Open MPLAB X and create a new project for the target PIC device (matching the header used, e.g., PIC16F877A).
-2. Add `Codes/GPS _main.c`, `Codes/Functions_gps.c`, and `Codes/Functions_gps.h` to the project.
-3. Add or provide missing header/source files required by the project (`functions.h`, `lcdbt.h`, LCD driver, etc.).
-4. Build the project in MPLAB X and program the MCU using your programmer.
+## Déroulement du programme
 
-(If you use the XC8 command-line tool, create a project/Makefile that compiles the sources and links to generate a hex file; using MPLAB X is the simplest route.)
+```mermaid
+flowchart TD
+    A[Initialisation du LCD] --> B[Mode smart du GPS] --> C[Initialisation de l'UART]
+    C --> D[Date et heure]
+    D --> E[Latitude et longitude]
+    E --> F[Satellites et altitude]
+    F --> D
+```
 
-## How it works (runtime summary)
-- The MCU initializes the LCD and serial port (BRGH=1, SPBRG=51 for 4800 baud).
-- `init_gps_mode_smart()` toggles RC4/RC5 to select the GPS module smart mode.
-- In the main loop the firmware repeatedly:
-  - Requests date, time, latitude, longitude, satellite count and altitude using `request_gps(...)`
-  - Parses returned bytes from the GPS and writes formatted values to the LCD.
-- The GPS protocol used in `request_gps()` starts the request with the string `!GPS` followed by a command byte (GetDate, GetTime, GetLat, GetLong, GetSats, GetAlt).
+Chaque écran affiche deux informations, une par ligne du LCD. Les octets reçus sont convertis en caractères chiffre par chiffre (division et modulo 10), sans `printf`.
 
-## Troubleshooting
-- If you see no data: check GPS power, baud rate, wiring (TX->RX), and that RC6/RC7 TRIS settings allow UART use.
-- If LCD shows garbage: confirm `init_PORTD()` and LCD wiring, contrast and enabling lines.
-- If compilation fails: ensure the correct device is selected in the IDE and that missing header/source files are added.
+## Résultats
 
-## Contact
-@tedjelmoulksn-dotcom
+Le dialogue avec le module fonctionne : les requêtes sont envoyées, les réponses sont reçues et les six grandeurs s'affichent sur le LCD.
+
+| Écran de date | Écran d'altitude |
+|---|---|
+| ![LCD affichant la date](assets/lcd_date.jpg) | ![LCD affichant l'altitude](assets/lcd_altitude.jpg) |
+
+Les photos montrent le fonctionnement de la chaîne de communication et d'affichage. Les valeurs visibles (date, altitude) ne correspondent pas à une position réelle validée : aucune mesure de précision n'a été faite, et rien n'est annoncé à ce sujet.
+
+## Limites et améliorations
+
+- **Fichiers manquants** : `functions.h` et `lcdbt.h` (temporisations et pilote du LCD, fournis pour les travaux pratiques) ne sont pas dans le dépôt. Le projet ne se compile pas sans eux.
+- **Validité non vérifiée** : la commande de validité du signal du module n'est pas utilisée ; le programme affiche ce qu'il reçoit, même sans réception satellite correcte.
+- **Direction** : l'octet de direction (N/S, E/O) est envoyé tel quel au LCD au lieu d'être converti en lettre.
+- **Satellites** : l'affichage du nombre de satellites écrit des chiffres en double.
+- **Date** : l'ordre jour/mois à la réception est à vérifier par rapport à la documentation du module.
+- **Réception bloquante** : `recoit_car()` attend indéfiniment ; si le module ne répond pas, le programme se fige. Un délai de garde serait nécessaire.
+- **Changement d'écran par bouton** : une version utilisant l'interruption du bouton RB0 pour changer d'écran a été présentée en soutenance ; elle ne figure pas dans le code de ce dépôt, qui fait défiler les écrans automatiquement.
+- **Structure** : les variables globales sont définies à la fois dans le `.h` et dans les `.c` ; elles devraient être déclarées `extern` dans l'en-tête.
+
+## Compilation
+
+1. Créer un projet MPLAB pour le PIC de la carte avec le compilateur HI-TECH PICC.
+2. Ajouter les trois fichiers du dossier `Codes/` ainsi que `functions.h` et `lcdbt.h`.
+3. Compiler, puis programmer la carte.
+
+Bits de configuration utilisés : `__CONFIG(HS & WDTDIS & BOREN & LVPDIS)` (oscillateur HS, chien de garde désactivé, reset sur chute de tension activé, programmation basse tension désactivée).
+
+> La compilation n'a pas été rejouée lors de la rédaction de cette documentation : la dernière version validée est celle réalisée pendant le projet.
+
+## Licence
+
+Aucune licence n'a été définie pour ce code.
