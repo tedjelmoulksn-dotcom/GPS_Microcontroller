@@ -1,0 +1,25 @@
+_ecriture_commande: CODE, 77 0 33
+___awdiv: CODE, 598 0 114
+_request_gps: CODE, 712 0 148
+_tempo_N_ms: CODE, 186 0 43
+_init_liaison_serie: CODE, 46 0 31
+___awmod: CODE, 506 0 92
+_init_PORTD: CODE, 3972 0 7
+_main: CODE, 860 0 1188
+_tempo_1_ms: CODE, 3957 0 8
+_print_char: CODE, 110 0 35
+___lwdiv: CODE, 347 0 75
+_print_string: CODE, 145 0 41
+_init_gps_mode_smart: CODE, 3910 0 18
+_lecture_commande: CODE, 229 0 55
+_emet_string: CODE, 17 0 29
+_attente_bf: CODE, 3928 0 11
+_recoit_car: CODE, 3948 0 9
+_init_LCD: CODE, 422 0 84
+___lwmod: CODE, 284 0 63
+_efface: CODE, 3986 0 7
+_goto_ligne_1: CODE, 3979 0 7
+_goto_ligne_2: CODE, 3965 0 7
+_emet_car: CODE, 6 0 11
+_allume_LCD: CODE, 3939 0 9
+Total: 2125

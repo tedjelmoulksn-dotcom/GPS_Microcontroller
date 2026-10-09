@@ -1,314 +1,167 @@
-# PIC GPS Receiver Interface
+# Récepteur GPS sur microcontrôleur PIC
 
-Bare-metal PIC firmware for UART GPS requests, binary decoding and LCD display.
+Lecture d'un module GPS par un microcontrôleur PIC16 et affichage de la date, de l'heure, de la latitude, de la longitude, du nombre de satellites et de l'altitude sur un écran LCD. Le programme est écrit en C, sans bibliothèque de liaison série : l'UART est configurée registre par registre.
 
-**Embedded C · PIC16 · UART Registers · RS232/TTL Interfacing · Binary Protocols · Bit Manipulation · LCD Integration**
+![Carte PICDEM 2 Plus reliée à la carte d'extension portant le module GPS](assets/montage_carte_et_module_gps.jpg)
 
-![PICDEM 2 Plus board and GPS interface hardware](assets/montage_carte_et_module_gps.jpg)
+*Montage complet : carte de développement PICDEM 2 Plus (à gauche) et carte d'extension portant le récepteur GPS (en bas à droite).*
 
-*PICDEM 2 Plus development board connected to the GPS extension hardware.*
+## Sommaire
 
-## Project Overview
+1. [Présentation](#présentation)
+2. [Matériel et outils](#matériel-et-outils)
+3. [Architecture du montage](#architecture-du-montage)
+4. [Liaison série](#liaison-série)
+5. [Protocole du module GPS](#protocole-du-module-gps)
+6. [Organisation du code](#organisation-du-code)
+7. [Déroulement du programme](#déroulement-du-programme)
+8. [Résultats](#résultats)
+9. [Limites et améliorations](#limites-et-améliorations)
+10. [Compilation](#compilation)
 
-| Item | Details |
+## Présentation
+
+- **Cadre** : projet de microcontrôleur, première année du cycle ingénieur Instrumentation, Sup Galilée (Université Sorbonne Paris Nord).
+- **Équipe** : projet réalisé en binôme avec Sarah Dahmoun.
+- **Objectif** : faire dialoguer un PIC avec un récepteur GPS par liaison série asynchrone, décoder les réponses et les afficher sur le LCD de la carte.
+- **État** : projet académique terminé, non maintenu.
+
+## Matériel et outils
+
+| Élément | Détail |
 |---|---|
-| Context | First-year engineering microcontroller project, Instrumentation, Sup Galilée, Université Sorbonne Paris Nord |
-| Authors | Tedj El Moulk Sinacer and Sarah Dahmoun |
-| Supervisor | M. Min Lee, credited in the project presentation |
-| Development board | Microchip PICDEM 2 Plus Demo Board |
-| MCU family | PIC16F87xA, referenced through `pic168xa.h`; exact fitted device should be checked on the board |
-| Oscillator assumption | 4 MHz |
-| Toolchain | MPLAB with HI-TECH PICC; ICD 3 programming/debugging |
-| Status | Completed academic prototype; historical source and documentation |
+| Carte | Microchip PICDEM 2 Plus Demo Board |
+| Microcontrôleur | PIC16 de la famille 16F87xA (en-tête `pic168xa.h`), oscillateur 4 MHz |
+| Récepteur GPS | Module piloté par commandes `!GPS`, utilisé en mode « smart » |
+| Carte d'extension | Convertisseur RS232/TTL et multiplexeur question/réponse vers la broche SIO du module |
+| Affichage | LCD 2 × 16 caractères de la carte (OCULAR OM16214) |
+| Compilateur | HI-TECH PICC, sous MPLAB, programmation par ICD 3 |
 
-The GPS receiver performs satellite positioning internally. The PIC implements the peripheral interface, request sequencing, binary decoding and display logic. This project concerns receiver interfacing, rather than implementation of a satellite-position solver.
+## Architecture du montage
 
-## Embedded Engineering Scope
+Le module GPS communique sur une seule broche bidirectionnelle (SIO). La carte d'extension adapte les niveaux RS232/TTL et aiguille cette broche soit vers l'émission du PIC (question), soit vers sa réception (réponse).
 
-The project exercises several low-level firmware tasks:
+```mermaid
+flowchart LR
+    subgraph PICDEM["Carte PICDEM 2 Plus"]
+        PIC["PIC16<br/>UART : RC6 (TX) / RC7 (RX)"]
+        LCD["LCD 2 × 16"]
+        PIC --> LCD
+    end
+    subgraph EXT["Carte d'extension"]
+        CONV["Convertisseur<br/>RS232 / TTL"]
+        MUX["Multiplexeur<br/>question / réponse"]
+        GPS["Récepteur GPS<br/>broches SIO et /RAW"]
+        CONV <--> MUX
+        MUX <--> GPS
+    end
+    PIC <-- "RS232 (DB9)" --> CONV
+    PIC -- "RC4 : sens question / réponse" --> MUX
+    PIC -- "RC5 : choix du mode" --> GPS
+```
 
-- configuring a serial peripheral through individual register bits;
-- calculating a baud-rate generator divisor from the oscillator frequency;
-- transmitting and receiving bytes by polling peripheral status flags;
-- selecting the direction of a shared GPS serial line through external hardware;
-- separating ASCII command prefixes from binary payloads;
-- reconstructing multi-byte values using shifts and integer arithmetic;
-- formatting numbers for a character display without `printf`;
-- integrating application logic with legacy compiler and board-support dependencies.
+| Broche du PIC | Rôle |
+|---|---|
+| RC6 / RC7 | Émission / réception UART, via le connecteur RS232 de la carte |
+| RC4 | Sens de l'échange : `0` pour envoyer une question, `1` pour lire la réponse |
+| RC5 | Sélection du mode du module (`1` : mode smart) |
+| PORTD | Écran LCD |
 
-The UART path does not use a high-level serial library, an RTOS, DMA or an interrupt-driven receive buffer in the preserved source.
+## Liaison série
 
-## Hardware Architecture
+La liaison est asynchrone, à 4800 bauds, 8 bits de données, sans parité (durée d'un bit : 1/4800 ≈ 208 µs).
 
-The extension board adapts RS232 and TTL signal levels and switches the receiver's single bidirectional SIO line between request transmission and response reception.
+Avec `BRGH = 1`, la vitesse vaut `Fosc / (16 × (SPBRG + 1))`. Pour un oscillateur à 4 MHz et `SPBRG = 51`, on obtient 4 MHz / (16 × 52) ≈ 4808 bauds, soit un écart d'environ 0,2 % par rapport à 4800.
+
+Configuration réalisée dans `init_liaison_serie()` :
+
+| Étape | Bits | Effet |
+|---|---|---|
+| Vitesse | `BRGH = 1`, `SPBRG = 51` | 4800 bauds |
+| Mode | `SYNC = 0`, `SPEN = 1` | Asynchrone, broches RC6/RC7 affectées à l'UART |
+| Interruptions | `TXIE = 0`, `RCIE = 0` | Aucune : émission et réception par scrutation |
+| Format | `TX9 = 0`, `RX9 = 0` | 8 bits |
+| Activation | `TXEN = 1`, `CREN = 1` | Émetteur et récepteur validés |
+
+L'émission attend le drapeau `TXIF` avant d'écrire dans `TXREG` ; la réception attend `RCIF` avant de lire `RCREG`.
+
+## Protocole du module GPS
+
+En mode smart, le module ne diffuse pas de trames en continu : il répond à des requêtes. Chaque requête est la chaîne ASCII `!GPS` suivie d'un octet de commande, et la réponse est une suite d'octets binaires.
+
+| Commande | Code | Octets reçus | Contenu lu par le programme |
+|---|---|---|---|
+| `GetSats` | `0x02` | 1 | Nombre de satellites |
+| `GetTime` | `0x03` | 3 | Heures, minutes, secondes (UTC) |
+| `GetDate` | `0x04` | 3 | Date |
+| `GetLat` | `0x05` | 5 | Degrés, minutes, fraction de minute (16 bits), direction |
+| `GetLong` | `0x06` | 5 | Degrés, minutes, fraction de minute (16 bits), direction |
+| `GetAlt` | `0x07` | 2 | Altitude (16 bits) |
+
+Les valeurs sur 16 bits arrivent octet de poids fort en premier et sont recomposées par `(octet_haut << 8) + octet_bas`.
+
+## Organisation du code
+
+```
+Codes/
+├── GPS _main.c        Programme principal : initialisations puis boucle d'affichage
+├── Functions_gps.c    UART, sélection du mode, requêtes et décodage des réponses
+└── Functions_gps.h    Constantes, variables partagées et prototypes
+assets/                Photos du montage
+```
+
+| Fonction | Rôle |
+|---|---|
+| `init_liaison_serie()` | Configure l'UART à 4800 bauds |
+| `emet_car()` / `emet_string()` | Envoie un caractère ou une chaîne (RC4 à `0`) |
+| `recoit_car()` | Attend et renvoie un octet reçu (RC4 à `1`) |
+| `init_gps_mode_smart()` | Configure RC4 et RC5 en sortie et sélectionne le mode smart |
+| `request_gps(commande)` | Envoie `!GPS` + commande, puis range la réponse dans les variables globales |
+
+## Déroulement du programme
 
 ```mermaid
 flowchart TD
-    P["PIC16 UART: RC6 TX and RC7 RX"] <-->|"Board RS232 connection"| C["RS232 / TTL level conversion"]
-    C <--> M["Request / response multiplexer"]
-    M <--> G["GPS receiver: bidirectional SIO"]
-    P --> L["Character LCD on PORTD"]
-    P -->|"RC4: direction selection"| M
-    P -->|"RC5: smart-mode selection"| G
+    A[Initialisation du LCD] --> B[Mode smart du GPS] --> C[Initialisation de l'UART]
+    C --> D[Date et heure]
+    D --> E[Latitude et longitude]
+    E --> F[Satellites et altitude]
+    F --> D
 ```
 
-| Connection | Function |
+Chaque écran affiche deux informations, une par ligne du LCD. Les octets reçus sont convertis en caractères chiffre par chiffre (division et modulo 10), sans `printf`.
+
+## Résultats
+
+Le dialogue avec le module fonctionne : les requêtes sont envoyées, les réponses sont reçues et les six grandeurs s'affichent sur le LCD.
+
+| Écran de date | Écran d'altitude |
 |---|---|
-| RC6 / RC7 | UART transmit / receive pins |
-| RC4 | External direction selection: 0 for request transmission, 1 for response reception |
-| RC5 | GPS mode selection: 1 for smart mode in this application |
-| PORTD | LCD interface |
-| LCD | Board's 16 × 2 OCULAR OM16214 character display |
+| ![LCD affichant la date](assets/lcd_date.jpg) | ![LCD affichant l'altitude](assets/lcd_altitude.jpg) |
 
-RS232/TTL conversion is an electrical interface function. UART framing and GPS command decoding are implemented separately in firmware.
+Les photos montrent le fonctionnement de la chaîne de communication et d'affichage. Les valeurs visibles (date, altitude) ne correspondent pas à une position réelle validée : aucune mesure de précision n'a été faite, et rien n'est annoncé à ce sujet.
 
-The source contains an older comment associating RC4 with the RAW pin. The operational assignments above follow the existing project description and code behaviour; confirm the extension-board schematic before recreating the wiring.
+## Limites et améliorations
 
-## UART Configuration
+- **Fichiers manquants** : `functions.h` et `lcdbt.h` (temporisations et pilote du LCD, fournis pour les travaux pratiques) ne sont pas dans le dépôt. Le projet ne se compile pas sans eux.
+- **Validité non vérifiée** : la commande de validité du signal du module n'est pas utilisée ; le programme affiche ce qu'il reçoit, même sans réception satellite correcte.
+- **Direction** : l'octet de direction (N/S, E/O) est envoyé tel quel au LCD au lieu d'être converti en lettre.
+- **Satellites** : l'affichage du nombre de satellites écrit des chiffres en double.
+- **Date** : l'ordre jour/mois à la réception est à vérifier par rapport à la documentation du module.
+- **Réception bloquante** : `recoit_car()` attend indéfiniment ; si le module ne répond pas, le programme se fige. Un délai de garde serait nécessaire.
+- **Changement d'écran par bouton** : une version utilisant l'interruption du bouton RB0 pour changer d'écran a été présentée en soutenance ; elle ne figure pas dans le code de ce dépôt, qui fait défiler les écrans automatiquement.
+- **Structure** : les variables globales sont définies à la fois dans le `.h` et dans les `.c` ; elles devraient être déclarées `extern` dans l'en-tête.
 
-### Baud-Rate Generator
+## Compilation
 
-The project uses asynchronous high-speed mode:
+1. Créer un projet MPLAB pour le PIC de la carte avec le compilateur HI-TECH PICC.
+2. Ajouter les trois fichiers du dossier `Codes/` ainsi que `functions.h` et `lcdbt.h`.
+3. Compiler, puis programmer la carte.
 
-```text
-baud = Fosc / (16 × (SPBRG + 1))
+Bits de configuration utilisés : `__CONFIG(HS & WDTDIS & BOREN & LVPDIS)` (oscillateur HS, chien de garde désactivé, reset sur chute de tension activé, programmation basse tension désactivée).
 
-Fosc  = 4,000,000 Hz
-SPBRG = 51
-baud  ≈ 4,807.69 bit/s
-error ≈ +0.160% relative to 4,800 bit/s
-```
+> La compilation n'a pas été rejouée lors de la rédaction de cette documentation : la dernière version validée est celle réalisée pendant le projet.
 
-At the nominal 4,800 bit/s rate, one bit lasts approximately 208.33 µs. An 8-bit asynchronous character with one start bit and one stop bit occupies 10 bit periods, approximately 2.083 ms.
+## Licence
 
-The theoretical report includes parity examples; the preserved UART initialization selects 8-bit transfers and does not implement a parity-generation layer.
-
-### Register and Bit Settings
-
-[`init_liaison_serie()`](Codes/Functions_gps.c) sets the peripheral control bits directly.
-
-| Register or control | Setting | Purpose in this implementation |
-|---|---|---|
-| `TXSTA.BRGH` | 1 | High-speed baud-rate generation |
-| `SPBRG` | 51 | Divisor for the 4 MHz oscillator assumption |
-| `TXSTA.SYNC` | 0 | Asynchronous operation |
-| `RCSTA.SPEN` | 1 | Enable the serial peripheral |
-| `TRISC6`, `TRISC7` | 1 | UART pin-direction values used by the source |
-| `TXIE`, `RCIE` | 0 | Disable UART transmit and receive interrupts |
-| `RCSTA.ADDEN` | 0 | Disable address-detection mode |
-| `TXSTA.TX9`, `RCSTA.RX9` | 0 | Select 8-bit data transfers |
-| `TXSTA.TXEN` | 1 | Enable transmission |
-| `RCSTA.CREN` | 1 | Enable continuous reception |
-
-The exact device datasheet and board configuration must be used when restoring this legacy project; the register settings are documented here as implemented, rather than claimed to be portable to every PIC16 variant.
-
-### Byte Transmission and Reception
-
-| Function | Operation |
-|---|---|
-| `emet_car(byte)` | Selects transmit direction through RC4, waits for `TXIF`, then writes `TXREG` |
-| `emet_string(ptr)` | Iterates through a null-terminated string and sends each byte |
-| `recoit_car()` | Selects receive direction, waits for `RCIF`, then reads `RCREG` |
-
-The transmit routine checks buffer availability. It does not explicitly check `TRMT` before switching the external line direction. The report identifies the transmit shift register and its empty status; a restored implementation should distinguish a writable transmit buffer from completion of the last byte on the wire.
-
-## GPS Smart-Mode Protocol
-
-### Initialization
-
-`init_gps_mode_smart()` configures RC4 and RC5 as outputs, selects request transmission with `RC4 = 0`, selects smart mode with `RC5 = 1` and applies a 10 ms initialization delay.
-
-### Request Format
-
-Each transaction sends a four-byte ASCII prefix followed by a raw command byte:
-
-```text
-Byte index:    0      1      2      3      4
-Payload:      '!'    'G'    'P'    'S'   command
-Hex prefix:   0x21   0x47   0x50   0x53
-
-Example GetTime request: 21 47 50 53 03
-```
-
-The prefix is transmitted without its C-string null terminator. The command is a binary byte, not an ASCII digit.
-
-Responses are parsed as fixed-length binary values. The implemented smart-mode path does not parse NMEA sentences.
-
-### Command Map
-
-| Command | Byte | Expected response length | Fields read by the firmware |
-|---|---|---|---|
-| `GetSats` | `0x02` | 1 byte | Satellite count |
-| `GetTime` | `0x03` | 3 bytes | Hours, minutes, seconds |
-| `GetDate` | `0x04` | 3 bytes | Assigned to day, month, year |
-| `GetLat` | `0x05` | 5 bytes | Degrees, minutes, fractional-minute high byte, low byte, direction |
-| `GetLong` | `0x06` | 5 bytes | Same field layout as latitude |
-| `GetAlt` | `0x07` | 2 bytes | Altitude high byte, low byte |
-
-The table describes the decoder's field interpretation. When adapting it to a receiver, align byte order, field units, signedness and hemisphere codes with that receiver's protocol; these are part of the transport-to-application contract.
-
-### Transaction Sequence
-
-`request_gps()`:
-
-1. sends `!GPS`;
-2. sends the command byte;
-3. waits 100 ms;
-4. selects the receive direction;
-5. reads the expected number of bytes through blocking calls;
-6. writes the decoded fields into global variables.
-
-The `GetSats` branch also includes a 3 s display delay inside the protocol function.
-
-The 100 ms wait precedes reception and line-direction switching. Trace the last transmitted stop bit, RC4 transition and first response byte together: that sequence determines whether the handover fits the receiver latency and UART buffering.
-
-## Binary Decoding
-
-### Multi-Byte Values
-
-The code receives the most significant byte first and reconstructs fractional minutes and altitude as:
-
-```c
-value = (high_byte << 8) + low_byte;
-```
-
-An explicitly typed form for a future port, assuming a compiler with fixed-width integer support, would be:
-
-```c
-uint16_t value = ((uint16_t)high_byte << 8) | (uint16_t)low_byte;
-```
-
-This is an illustrative improvement, not a change to the stored firmware. Explicit widths and casts make byte order and integer-promotion assumptions easier to review.
-
-### Coordinate Representation
-
-Latitude and longitude reuse `degrees`, `minutes`, `minutesD` and `dir`. Each response is displayed before those variables are overwritten by the next request.
-
-The LCD prints degrees, whole minutes and four fractional-minute digits. Decimal-degree conversion is not implemented. If the receiver documentation confirms that `minutesD` represents ten-thousandths of a minute, conversion would be:
-
-```text
-decimal_degrees = degrees + (minutes + minutesD / 10000.0) / 60.0
-```
-
-Hemisphere mapping must also be confirmed before applying a sign. The current code writes the direction byte directly to the LCD.
-
-## LCD Formatting and Application Flow
-
-The application initializes the LCD, selects GPS smart mode, initializes the UART and cycles through three display pages:
-
-| Page | First line | Second line |
-|---|---|---|
-| 1 | Date | Time |
-| 2 | Latitude | Longitude |
-| 3 | Satellite count | Altitude |
-
-Numeric formatting uses division and modulo followed by ASCII conversion:
-
-```c
-print_char(value / 10 + '0');
-print_char(value % 10 + '0');
-```
-
-This is a compact two-digit formatter, valid only when the input is within its intended range. The implementation does not use floating-point formatting or `printf`.
-
-The screens are updated through blocking delays. Date, time, coordinates and altitude are requested separately, so the display does not represent a single atomic navigation sample.
-
-### Button-Interrupt Version in the Presentation
-
-The presentation describes page selection through the external RB0 interrupt, using `INTF`, `INTE` and an `interrupt traitement_it` routine.
-
-That interrupt-based version is not present in the three source files. The preserved `main()` automatically cycles through the pages. UART transfers remain polling-based in the available implementation.
-
-## Source Organization
-
-| File | Responsibility |
-|---|---|
-| [`Codes/GPS _main.c`](Codes/GPS%20_main.c) | Board configuration, initialization, page sequencing and numeric LCD output |
-| [`Codes/Functions_gps.c`](Codes/Functions_gps.c) | Register-level UART routines, smart-mode selection and command-response decoding |
-| [`Codes/Functions_gps.h`](Codes/Functions_gps.h) | Command constants, function declarations and shared variable definitions |
-| `assets/` | Board and LCD photographs |
-| `documentation/` | Original project report and presentation |
-
-The historical French function names are retained to keep the documentation aligned with the source.
-
-## Legacy Toolchain and Build Status
-
-The main source uses:
-
-```c
-__CONFIG(HS & WDTDIS & BOREN & LVPDIS);
-char debug @0x70;
-```
-
-The configuration selects HS oscillator mode, disables the watchdog, enables brown-out reset and disables low-voltage programming. Absolute-address syntax `@0x70` is a HI-TECH compiler extension, with an original comment referring to ICD 3 debugging.
-
-The firmware integrates with the original MPLAB board-support layer: `functions.h`, `lcdbt.h`, delay/display implementations and device-specific project settings are required alongside the GPS sources.
-
-### Restoration Procedure
-
-1. Identify the fitted PIC and confirm the oscillator and extension-board wiring.
-2. Create a project for that device using a compatible legacy toolchain, or explicitly port the compiler-specific syntax.
-3. Restore the original delay and LCD support dependencies.
-4. Resolve duplicate global definitions and include the GPS function declarations consistently.
-5. Check configuration words, UART pin behaviour and integer sizes against the selected compiler and device.
-6. Build, program through a compatible debugger and verify the serial exchange on hardware.
-
-During bring-up, verify request bytes and line-direction timing before checking the LCD values. This isolates transport errors from decoding and presentation.
-
-## Demonstration Evidence
-
-The LCD photographs illustrate the full peripheral chain: a request is serialised, the receiver returns binary fields, the PIC reconstructs them and the display routine converts them to readable values. The implementation makes the boundary between navigation computation in the receiver and data handling in the MCU explicit.
-
-| Date display | Altitude display |
-|---|---|
-| ![Date displayed on the LCD](assets/lcd_date.jpg) | ![Altitude displayed on the LCD](assets/lcd_altitude.jpg) |
-
-The photographs illustrate request/response decoding and LCD presentation. Fix validity belongs to the receiver status and should be checked separately from successful byte reception and formatting.
-
-## Implementation Review
-
-| Finding | Engineering implication | Proposed improvement |
-|---|---|---|
-| Blocking wait on `RCIF` without timeout | Missing response can freeze the application | Add bounded receive operations and explicit status returns |
-| No implemented `FERR` / `OERR` handling | Serial faults have no recovery path | Add device-specific fault checks and receiver recovery |
-| Fixed delay before receiving | Response timing and buffering are unverified | Measure timing and introduce a transaction state machine |
-| No explicit end-of-transmission check before direction handover | Shared-line turnaround needs validation | Confirm transmit completion before selecting reception |
-| Global fields defined in multiple files and the header | Linkage and ownership are unclear | Use a guarded header, `extern` declarations and one definition |
-| Function declarations not consistently included by the source files | Legacy implicit-declaration assumptions may affect compilation | Include a common API header |
-| Local declarations inside `switch` cases | Compiler-language compatibility needs review | Use scoped case blocks or declarations compatible with the selected dialect |
-| Latitude and longitude share temporary storage | Both coordinates are not retained as one sample | Introduce separate fields in a navigation-data structure |
-| No fix-validity query | Displayed values may be invalid or stale | Verify the receiver's validity indication before publishing data |
-| Direction byte printed directly | Binary direction encoding may not be printable | Map verified direction codes to hemisphere labels |
-| Satellite count prints repeated digits | Display formatting is incorrect | Use one bounded integer-formatting routine |
-| Longitude degrees use a two-digit formatter | Values of 100° or more are not represented correctly | Support three degree digits and validate coordinate ranges |
-| Date and altitude semantics unverified | Decoder assumptions may not match the receiver | Confirm field order, units, signedness and ranges |
-| Driver contains display delays | Acquisition and presentation are coupled | Separate transport, decoding and UI scheduling |
-
-The review links each source-level finding to its effect on transport, decoding or presentation.
-
-## Suggested Hardware Validation
-
-| Check | Observation to capture |
-|---|---|
-| Oscillator and baud rate | Actual bit period and baud-rate error |
-| Request serialization | Exact `!GPS` prefix and binary command byte |
-| Shared-line turnaround | Last transmitted stop bit, RC4 transition and first response byte |
-| Response decoding | Expected byte count, byte order and field values |
-| Receiver fault | Behaviour with GPS disconnected or a delayed response |
-| Serial fault | Framing/overrun detection and recovery |
-| Numeric boundaries | Satellite counts, three-digit longitude and hemisphere mapping |
-| Navigation validity | Distinguish a valid fix from invalid or stale receiver output |
-| Display scheduling | Refresh interval and responsiveness |
-
-This plan separates electrical timing, protocol correctness and displayed-data validity.
-
-## Documentation
-
-- [Original project report — Word, French](documentation/rapport_projet_gps.docx): serial-interface study, register configuration, smart-mode protocol and application synthesis.
-- [Original project presentation — PowerPoint, French](documentation/presentation_projet_gps.pptx): communication functions, hardware interface and the RB0 interrupt-based display variant.
-
-## Authors and Licensing
-
-Developed by **Tedj El Moulk Sinacer** and **Sarah Dahmoun**.
-
-No project-wide licence has been specified. Compiler headers and original teaching/board-support dependencies remain subject to their respective terms.
+Aucune licence n'a été définie pour ce code.
