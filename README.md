@@ -1,6 +1,6 @@
 # PIC GPS Receiver Interface
 
-A bare-metal embedded C project that interfaces a GPS receiver with a PIC16 microcontroller through a register-configured UART. The firmware sends binary request commands, decodes the receiver's responses and displays date, time, coordinates, satellite count and altitude on a character LCD.
+Bare-metal PIC firmware for UART GPS requests, binary decoding and LCD display.
 
 **Embedded C · PIC16 · UART Registers · RS232/TTL Interfacing · Binary Protocols · Bit Manipulation · LCD Integration**
 
