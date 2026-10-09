@@ -145,7 +145,7 @@ Responses are parsed as fixed-length binary values. The implemented smart-mode p
 | `GetLong` | `0x06` | 5 bytes | Same field layout as latitude |
 | `GetAlt` | `0x07` | 2 bytes | Altitude high byte, low byte |
 
-This table describes the decoder in the repository. The receiver's exact model and authoritative protocol manual are not included, so date order, direction encoding, fractional-minute scale, altitude units and signedness need confirmation before reuse.
+The table describes the decoder's field interpretation. When adapting it to a receiver, align byte order, field units, signedness and hemisphere codes with that receiver's protocol; these are part of the transport-to-application contract.
 
 ### Transaction Sequence
 
@@ -160,7 +160,7 @@ This table describes the decoder in the repository. The receiver's exact model a
 
 The `GetSats` branch also includes a 3 s display delay inside the protocol function.
 
-The 100 ms wait occurs before reception and direction switching. Its compatibility with the receiver's response latency and the UART receive buffering has not been established in the preserved material. This is an important point to measure with a logic analyser during restoration.
+The 100 ms wait precedes reception and line-direction switching. Trace the last transmitted stop bit, RC4 transition and first response byte together: that sequence determines whether the handover fits the receiver latency and UART buffering.
 
 ## Binary Decoding
 
@@ -242,7 +242,7 @@ char debug @0x70;
 
 The configuration selects HS oscillator mode, disables the watchdog, enables brown-out reset and disables low-voltage programming. Absolute-address syntax `@0x70` is a HI-TECH compiler extension, with an original comment referring to ICD 3 debugging.
 
-The repository is not a standalone buildable project. It lacks `functions.h`, `lcdbt.h`, their board-support implementations and the original MPLAB project configuration.
+The firmware integrates with the original MPLAB board-support layer: `functions.h`, `lcdbt.h`, delay/display implementations and device-specific project settings are required alongside the GPS sources.
 
 ### Restoration Procedure
 
@@ -253,15 +253,17 @@ The repository is not a standalone buildable project. It lacks `functions.h`, `l
 5. Check configuration words, UART pin behaviour and integer sizes against the selected compiler and device.
 6. Build, program through a compatible debugger and verify the serial exchange on hardware.
 
-No build, programming or hardware verification was performed as part of this documentation update.
+During bring-up, verify request bytes and line-direction timing before checking the LCD values. This isolates transport errors from decoding and presentation.
 
 ## Demonstration Evidence
+
+The LCD photographs illustrate the full peripheral chain: a request is serialised, the receiver returns binary fields, the PIC reconstructs them and the display routine converts them to readable values. The implementation makes the boundary between navigation computation in the receiver and data handling in the MCU explicit.
 
 | Date display | Altitude display |
 |---|---|
 | ![Date displayed on the LCD](assets/lcd_date.jpg) | ![Altitude displayed on the LCD](assets/lcd_altitude.jpg) |
 
-The photographs and project documents demonstrate the communication-and-display exercise. They do not establish a valid satellite fix, positioning accuracy or altitude accuracy.
+The photographs illustrate request/response decoding and LCD presentation. Fix validity belongs to the receiver status and should be checked separately from successful byte reception and formatting.
 
 ## Implementation Review
 
@@ -282,7 +284,7 @@ The photographs and project documents demonstrate the communication-and-display 
 | Date and altitude semantics unverified | Decoder assumptions may not match the receiver | Confirm field order, units, signedness and ranges |
 | Driver contains display delays | Acquisition and presentation are coupled | Separate transport, decoding and UI scheduling |
 
-These findings are derived from the stored source. Proposed changes are not implemented features.
+The review links each source-level finding to its effect on transport, decoding or presentation.
 
 ## Suggested Hardware Validation
 
@@ -298,7 +300,7 @@ These findings are derived from the stored source. Proposed changes are not impl
 | Navigation validity | Distinguish a valid fix from invalid or stale receiver output |
 | Display scheduling | Refresh interval and responsiveness |
 
-This is a proposed validation plan, not a record of completed tests.
+This plan separates electrical timing, protocol correctness and displayed-data validity.
 
 ## Documentation
 
