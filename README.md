@@ -2,6 +2,10 @@
 
 A C firmware project connecting a GPS module to a PIC16F87xA microcontroller and a PICDEM 2 Plus LCD. It covers UART communication, module commands and display integration.
 
+![GPS Microcontroller project overview](assets/montage_carte_et_module_gps.jpg)
+
+*Original PICDEM 2 Plus and GPS-module laboratory setup.*
+
 ## Architecture
 
 The microcontroller communicates with the GPS module through a serial interface configured at **4800 baud**, with a **4 MHz** clock configuration in the supplied code. The firmware uses module-specific `!GPS` commands; the included NMEA reference explains a related protocol rather than documenting a complete NMEA parser in this implementation.
