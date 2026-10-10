@@ -1,24 +1,24 @@
-# PIC GPS Receiver
+# PIC GPS Interface
 
-PIC microcontroller project that communicates with a GPS module over a register-configured UART and displays position, date, time, satellite count and altitude on an LCD.
+A C firmware project connecting a GPS module to a PIC16F87xA microcontroller and a PICDEM 2 Plus LCD. It covers UART communication, module commands and display integration.
 
-![Project illustration](assets/montage_carte_et_module_gps.jpg)
+## Architecture
+
+The microcontroller communicates with the GPS module through a serial interface configured at **4800 baud**, with a **4 MHz** clock configuration in the supplied code. The firmware uses module-specific `!GPS` commands; the included NMEA reference explains a related protocol rather than documenting a complete NMEA parser in this implementation.
 
 ## Repository guide
 
-| Location | Contents |
-|---|---|
-| [Codes/](Codes/) | Main GPS application and serial routines |
-| [documentation/](documentation/) | Project reports and presentation |
-| [docs/](docs/) | Module and interface datasheets, original reports |
-| [assets/](assets/) | Hardware and LCD photographs |
-| [archive/](archive/) | Original MPLAB projects and LCD experiments |
-| [firmware/](firmware/) | Preserved programmed firmware images |
+| Folder | Contents |
+| --- | --- |
+| [Codes](Codes/) | Application sources, GPS functions and serial initialization |
+| [documentation](documentation/) | Project reports and presentation |
+| [docs](docs/) | Component datasheets, protocol references and original notes |
+| [firmware](firmware/) | Historical HEX outputs |
+| [archive](archive/) | Original MPLAB project material |
+| [assets](assets/) | Hardware photographs |
 
-## Getting started
+## Working with the firmware
 
-Use MPLAB with the original HI-TECH PIC C toolchain and the PICDEM 2 Plus hardware configuration. Start with the sources in `Codes/`; the archived projects preserve LCD drivers and original compiler settings.
+Use the original MPLAB project and HI-TECH C toolchain as the starting point. Check the selected PIC, oscillator settings, serial wiring and LCD driver against your board before building or programming it. The reports describe the hardware connections and command sequence.
 
-## Project context
-
-Academic project developed with Sarah Dahmoun. The original code depends on the PIC compiler headers and board interfaces; it is not a desktop C program.
+The HEX files are archived outputs, not a newly verified release. Hardware execution has not been repeated during repository organization.
